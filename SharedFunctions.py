@@ -124,8 +124,11 @@ def PrintAndLog(strMsg, LogFile, addFirst="\n", flushBuffer=True):
 def CastFloatListToInt(myList):
     for i in range(len(myList)):
         myList[i] = int(myList[i])
-    
-def FilterStringList(my_list, Prefix='', Ext='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0):
+
+'''
+Sort: None not to sort, or: 'ASC' | 'DESC' to sort output list ascending | descending
+'''
+def FilterStringList(my_list, Prefix='', Ext='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0, Sort=None):
     if Verbose>0:
         print('before filter: {0} files'.format(len(my_list)))
     if (len(Prefix) > 0):
@@ -139,6 +142,10 @@ def FilterStringList(my_list, Prefix='', Ext='', Step=-1, FilterString='', Exclu
             my_list = [i for i in my_list if excl_str not in i]
     if Verbose>0:
         print('after filter: {0} files'.format(len(my_list)))
+    if (Sort=='ASC' or Sort=='asc'):
+        my_list.sort(reverse=False)
+    elif (Sort=='DESC' or Sort=='desc'):
+        my_list.sort(reverse=True)
     if (Step > 0):
         resList = []
         for idx in range(len(my_list)):
@@ -148,7 +155,7 @@ def FilterStringList(my_list, Prefix='', Ext='', Step=-1, FilterString='', Exclu
     else:
         return my_list
     
-def FindFileNames(FolderPath, Prefix='', Ext='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0, AppendFolder=False):
+def FindFileNames(FolderPath, Prefix='', Ext='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0, AppendFolder=False, Sort=None):
     if Verbose>0:
         print('Sarching {0}{1}*{2}'.format(FolderPath, Prefix, Ext))
     FilenameList = []
@@ -156,7 +163,7 @@ def FindFileNames(FolderPath, Prefix='', Ext='', Step=-1, FilterString='', Exclu
         FilenameList.extend(filenames)
         break
     FilenameList = FilterStringList(FilenameList, Prefix=Prefix, Ext=Ext, Step=Step, FilterString=FilterString,\
-                            ExcludeStrings=ExcludeStrings, Verbose=Verbose)
+                            ExcludeStrings=ExcludeStrings, Verbose=Verbose, Sort=Sort)
     if AppendFolder:
         for i in range(len(FilenameList)):
             FilenameList[i] = FolderPath + FilenameList[i]
@@ -166,7 +173,7 @@ def FindFileNames(FolderPath, Prefix='', Ext='', Step=-1, FilterString='', Exclu
 FirstLevelOnly: if True, only returns immediate subdirectories, otherwise returns every directory right down the tree
 Returns: list with complete paths of each subdirectory
 """
-def FindSubfolders(FolderPath, FirstLevelOnly=True, Prefix='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0):
+def FindSubfolders(FolderPath, FirstLevelOnly=True, Prefix='', Step=-1, FilterString='', ExcludeStrings=[], Verbose=0, Sort=None):
     if FirstLevelOnly:
         if (Prefix == ''):
             reslist = [os.path.join(FolderPath, o) for o in os.listdir(FolderPath) if os.path.isdir(os.path.join(FolderPath,o))]
@@ -174,7 +181,7 @@ def FindSubfolders(FolderPath, FirstLevelOnly=True, Prefix='', Step=-1, FilterSt
             reslist = [os.path.join(FolderPath, o) for o in os.listdir(FolderPath) if (os.path.isdir(os.path.join(FolderPath,o)) and o[:len(Prefix)]==Prefix)]
     else:
         reslist = [x[0] for x in os.walk(FolderPath)]
-    return FilterStringList(reslist, Prefix='', Ext='', Step=Step, FilterString=FilterString, ExcludeStrings=ExcludeStrings, Verbose=Verbose)
+    return FilterStringList(reslist, Prefix='', Ext='', Step=Step, FilterString=FilterString, ExcludeStrings=ExcludeStrings, Verbose=Verbose, Sort=Sort)
     
 """
 FilenameList:    list of filenames
@@ -359,12 +366,12 @@ def LinearFit(x, y, return_residuals=False, mask=None, nonan=True, catchex=False
         return slope[0]
 
 def downsample2d(inputArray, kernelSize, normArr=None):
+    if normArr is not None:
+        inputArray = np.true_divide(inputArray, normArr)
     if (kernelSize==1):
         return inputArray
     else:
         average_kernel = np.ones((kernelSize,kernelSize))*np.power(1.0*kernelSize, -2)
-        if normArr is not None:
-            inputArray = np.true_divide(inputArray, normArr)
         blurred_array = sp.signal.convolve2d(inputArray, average_kernel, mode='same', boundary='symm')
         downsampled_array = blurred_array[::kernelSize,::kernelSize]
         return downsampled_array
