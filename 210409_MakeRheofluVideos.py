@@ -14,11 +14,6 @@ import copy
 from PIL import Image
 import cv2
 
-# TODO:
-# - debug edge indexing by text file
-# - debug load normals and force in nt format
-# - load and draw channel edges
-
 # IMAGE SETTINGS
 _config_Imgs = {
         'subfolder_name' : 'Video_original\\',   # Where the program searches for PIV output. intended to be inside root folder
@@ -26,9 +21,11 @@ _config_Imgs = {
         'fname_ext' : '.tif',
         'subtract_bkg' : None,#'AVG_Data.tif',
         'grayscale_range' : [75, 170],#[-64, 64],#[-20, 20],      
-        'idx_range' : [150, 290, 1],#[216, 806, 1],#[0, -1, 1],       # Range of images to load [start_idx, end_idx, step]. Set end_idx=-1 to indicate last image
+        'idx_range' : [0, -1, 1],#[150, 290, 1],#[216, 806, 1],#       # Range of images to load [start_idx, end_idx, step]. Set end_idx=-1 to indicate last image
         'crop_ROI' : [0, 0, 0, 0],# [0, 0, 0, -20],     # ROI TO CROP [x,y,w,h]. If w is <=0, the program will take TotWidth-w instead. Same for h
-        'def_imgroot' : 'C:\\Users\\steaime\\Documents\\Research\\Codes\\Rheoflu\\video_folder\\'
+        'def_imgroot' : 'C:\\Users\\steaime\\Documents\\Research\\Codes\\Rheoflu\\video_folder\\',
+        'channel_edgeup' : 'TopEdge.txt', #None, # None or filename with upper channel edges. Path relative to the main root folder
+        'channel_edgedwn': 'BottomEdge.txt', #None,
         }
 
 # PIV SETTINGS
@@ -36,7 +33,7 @@ _config_PIV = {
         'subfolder_name' : 'PIV_ALL_128_64_32_24\\', #'PIV_wDrop_12x12\\',   # Where the program searches for PIV output. intended to be inside root folder
         'fname_prefix' : 'PIV',
         'fname_ext' : '.txt',
-        'idx_range' : [150, 290, 1],#[0, -1, 1],       # Range of images to load [start_idx, end_idx, step]. Set end_idx=-1 to indicate last image
+        'idx_range' : [0, -1, 1],#[150, 290, 1],#[0, -1, 1],       # Range of images to load [start_idx, end_idx, step]. Set end_idx=-1 to indicate last image
         'field_sep' : '\t',
         'hdr_len' : 0,
         'grid_shape' : None,         # PIV grid shape [n_cols, n_rows]. Set to None to extract it from PIV output files
@@ -74,7 +71,7 @@ _config_edge = {
         'fname_prefix' : 'EDGE_',
         'fname_ext' : '_a.txt',
         'fname_frameidx_pos' : -1, # index of the integer with frame number in filename
-        'idx_range' : [0, 130, 1],
+        'idx_range' : [0, -1, 1],
         'idx_from_file' : 'txt', # 'img'|'drop'|'none'|'ext' to associate edge file to image file:
                                  # - 'image': matching index in Edge filename with index in image filename
                                  # - 'drop' : matching index in Edge filename with droplet index 
@@ -83,14 +80,21 @@ _config_edge = {
         'idx_from_file_txt' : 'Droplet\\matchlog.txt', # if idx_from_file=='txt', path of the file (relative to the root folder)
         'idx_from_file_filecol' :   7, # if idx_from_file=='txt', column of edge file index (default for matchlog.txt: 7)
         'idx_from_file_framecol' :  1, # if idx_from_file=='txt', column of frame number (default for matchlog.txt: 1)
+        'idx_from_file_posx' :  4, 
+        'idx_from_file_posy' :  5, 
+        'idx_from_file_posoffset' :  [0, -15], 
         'field_sep' : ',',
         'hdr_len' : 0,
         'droplet_ref_frame' : None,#[0,16], # - None if the droplet edge is defined in the main reference frame
                                      # - otherwise: [x, y], where [0, 0] is the outcome of the template matching algorithm
-        'load_normals' : True, # Load normal vector to the surface
+        'load_normals' : True, # Load normal vector to the surface. Normal vector is positive pointing out of the droplet
         'load_forces' : True, # Load surface forces from edge files as well
         'force_format' : 'nt',  # 'nt'|'xy' to define forces in normal,tangential or x,y components.
-                                # 'nt' mode assumes that normals are loaded as well
+                                # 'nt' mode assumes that normals are loaded as well. 
+                                # Normal component is positive pointing out of the droplet
+                                # Tangential co;ponent is positive rotating CCW around the droplet
+        'fit_params' : '_FitParams.txt',#None, # None or filename with fit parameters: center of mass, mean radius, strains, stresses, outlier_flags
+        'fit_delimiter' : ',',
         }
 
 # ZOOMED PIV SETTINGS
@@ -129,7 +133,7 @@ _config_output = {
         'combined_zoom_idx' : 0, # In case of multiple found droplets, index of the droplet to show in the inset
         'figsize' : (9.06, 3),
         'zoom_figsize' : (5, 5),
-        'combined_figsize' : None,#(16,9), # if None, no figure size will be specified, constrained_layout will be used instead
+        'combined_figsize' : (15,9), # if None, no figure size will be specified, constrained_layout will be used instead
         'img_cmap' : 'Greys_r',
         'img_vbounds' : [60, 180],#[0, 256],  #[-64, 64],#
         'overlay_type' : 'avg_norm', # Color overlay. None to avoid overlay. 'norm' to use velocity norm, 'u|v to have x|y projections
@@ -142,18 +146,26 @@ _config_output = {
         'rectangleopts' : dict(linewidth=1, edgecolor='b', facecolor='none'),
         'rect_margin' : 1,
         'edge_hull' : True, # True (False) to draw edge hull (to draw individual points)
-        'edge_plot' : 'g-', # None not to plot edge
+        'edge_plot' : 'g.', # None not to plot edge
+        'edge_fit_plot' : 'g-', # None not to plot edge
+        'center_fit_plot' : 'kx',
+        'edge_fit_npts' : 100,
         'edge_fill' : {'color':'g', 'alpha':0.2}, # None or keyword dictionary with color
         'edge_mask_PIV' : True, # True (False) to mask (not to mask) PIV data enclosed in edges
         'stream_seedstep' : None, # Seed streamlines every N PIV grid nodes. None to avoid seeding.
         'stream_color' : 'norm', # If not None, same idea as overlay...
         'stream_avg' : True, # If True, use time-averaged PIV data to generate streamlines
-        'streamopts' : dict(density=[1.5,1.0], linewidth=1.0, color='r', cmap='hot', arrowsize=1.0, minlength=0.02), # If None, go for a quiver. Otherwise, draw a streamplot.
+        'streamopts' : dict(density=[1.2,0.8], linewidth=1.0, color='r', cmap='hot', arrowsize=1.0, minlength=0.03), # If None, go for a quiver. Otherwise, draw a streamplot.
         'quiveropts' : dict(color='r', units='width', scale=0.5, scale_units='xy', headlength=3, pivot='tail', width=0.003, headwidth=0.5, alpha=0.7),
         'quiverkey' : None,#[0.7, 0.9, 0.2],  # quiverkey [pos_x, pos_y, len] see https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.axes.Axes.quiverkey.html
         'qk_label' : r'$0.2 \frac{pix}{frame}$',
-        'plot_normalF' : None,#dict(color='darkgreen', alpha=0.8, linewidth=1.0, head_width=2.0, head_length=3.0, length_includes_head=True), # None or dictionnary with keywords for pyplot.arrow()
+        'plot_normalF' : dict(color='darkgreen', alpha=0.8, linewidth=1.0, head_width=2.0, head_length=3.0, length_includes_head=True), # None or dictionnary with keywords for pyplot.arrow()
+        'plot_normalF_fit' : True,
+        'plot_normalF_fit_maxorder' : 2,
+        'plot_normalF_fit_smoothT' : 10, #int>=0. To have smoother results, average force fit parameters of i-th droplet over valid (non-flagged) fit parameters in range [i-T, i+T]
         'normalF_scale' : 1.0, #
+        'ch_edge_line' : dict(color=(0.05, 0.05, 0.05, 0.6), linewidth=2.0),
+        'ch_edge_shade' : dict(color=(1.0, 1.0, 1.0, 0.5)),
         }
 
 # PROGRAM SETTINGS
@@ -263,27 +275,35 @@ def LoadAllPIV(froot, fnames, separator=',', header=0, load_extra_cols=[]):
     avg_y = []
     avg_u = []
     avg_v = []
-    num_frames = 0
+#    num_frames = 0
     for cur_f in fnames:
         cur_x, cur_y , cur_u, cur_v, cur_extra = OpenPIVresult(froot+cur_f, separator=separator, header=header, load_extra_cols=load_extra_cols)
         if (len(cur_x) > 0):
-            num_frames += 1
-            if (len(avg_x) == 0):
-                avg_x = cur_x
-                avg_y = cur_y
-                avg_u = cur_u
-                avg_v = cur_v
-            else:
-                avg_x = np.add(avg_x, cur_x)
-                avg_y = np.add(avg_y, cur_y)
-                avg_u = np.add(avg_u, cur_u)
-                avg_v = np.add(avg_v, cur_v)
+            avg_x.append(cur_x)
+            avg_y.append(cur_y)
+            avg_u.append(cur_u)
+            avg_v.append(cur_v)
+#            num_frames += 1
+#            if (len(avg_x) == 0):
+#                avg_x = cur_x
+#                avg_y = cur_y
+#                avg_u = cur_u
+#                avg_v = cur_v
+#            else:
+#                avg_x = np.add(avg_x, cur_x)
+#                avg_y = np.add(avg_y, cur_y)
+#                avg_u = np.add(avg_u, cur_u)
+#                avg_v = np.add(avg_v, cur_v)
         PIV_data.append({'x':cur_x, 'y':cur_y,\
                          'u':cur_u, 'v':cur_v, 'extra':cur_extra})
-    avg_x = np.true_divide(avg_x, num_frames)
-    avg_y = np.true_divide(avg_y, num_frames)
-    avg_u = np.true_divide(avg_u, num_frames)
-    avg_v = np.true_divide(avg_v, num_frames)
+#    avg_x = np.true_divide(avg_x, num_frames)
+#    avg_y = np.true_divide(avg_y, num_frames)
+#    avg_u = np.true_divide(avg_u, num_frames)
+#    avg_v = np.true_divide(avg_v, num_frames)
+    avg_x = np.nanmean(avg_x, axis=0)
+    avg_y = np.nanmean(avg_y, axis=0)
+    avg_u = np.nanmean(avg_u, axis=0)
+    avg_v = np.nanmean(avg_v, axis=0)
     
     return PIV_data, {'x':avg_x, 'y':avg_y, 'u':avg_u, 'v':avg_v}
    
@@ -369,10 +389,9 @@ def ReadEdgeFile(fname, separator=',', header=0, readNorm=False, readForce=False
                             tmp_fx, tmp_fy = float(words[cur_idx]), float(words[cur_idx+1])
                         else:
                             if (readNorm):
-                                ### TODO: DEBUG!!!!!
                                 tmp_fn, tmp_ft = float(words[cur_idx]), float(words[cur_idx+1])
-                                tmp_fx = tmp_fn*tmp_nx + tmp_ft*tmp_ny
-                                tmp_fy = tmp_fn*tmp_ny - tmp_ft*tmp_nx
+                                tmp_fx = tmp_fn*tmp_nx - tmp_ft*tmp_ny
+                                tmp_fy = tmp_fn*tmp_ny + tmp_ft*tmp_nx
                             else:
                                 tmp_fx, tmp_fy = np.nan, np.nan
                         cur_Fx.append(tmp_fx)
@@ -401,6 +420,16 @@ def in_hull(p, hull):
         hull = spsp.Delaunay(hull)
 
     return hull.find_simplex(p)>=0
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == '__main__':
     
@@ -488,6 +517,16 @@ if __name__ == '__main__':
                           _config['IMG']['fname_prefix'], _config['IMG']['fname_ext'], IMG_root, _config['IMG']['idx_range']))
             else:
                 IMG_root = None
+                
+            # Channel edges
+            chEdgeUp = None
+            chEdgeDwn = None
+            if (_config['IMG']['channel_edgeup'] is not None):
+                if (CheckFileExists(froot+_config['IMG']['channel_edgeup'])):
+                    chEdgeUp = np.loadtxt(froot+_config['IMG']['channel_edgeup'])
+            if (_config['IMG']['channel_edgedwn'] is not None):
+                if (CheckFileExists(froot+_config['IMG']['channel_edgedwn'])):
+                    chEdgeDwn = np.loadtxt(froot+_config['IMG']['channel_edgedwn'])
             
             # Search for PIV output
             PIV_root = None
@@ -527,6 +566,8 @@ if __name__ == '__main__':
             Edge_forces = None
             Edge_file_idx = None
             Edge_frame_idx = None
+            Edge_fitparams = None
+            Edge_file_posx, Edge_file_posy = None, None
             Edge_root = ''
             Edge_fnames = []
             if (_config['Edge']['subfolder_name'] is not None):
@@ -545,8 +586,15 @@ if __name__ == '__main__':
                         if CheckFileExists(froot+_config['Edge']['idx_from_file_txt']):
                             Edge_file_idx, Edge_frame_idx = np.loadtxt(froot+_config['Edge']['idx_from_file_txt'], 
                                                                        usecols=(_config['Edge']['idx_from_file_filecol'], _config['Edge']['idx_from_file_framecol']), unpack=True)
+                            if (_config['Edge']['idx_from_file_posx'] is not None):
+                                Edge_file_posx, Edge_file_posy = np.loadtxt(froot+_config['Edge']['idx_from_file_txt'], 
+                                                                            usecols=(_config['Edge']['idx_from_file_posx'], _config['Edge']['idx_from_file_posy']), unpack=True)
                         else:
                             print('\nWARNING: Edge index file {0} not found'.format(froot+_config['Edge']['idx_from_file_txt']))
+                    
+                    if (_config['Edge']['fit_params'] is not None):
+                        if CheckFileExists(froot+_config['Edge']['subfolder_name']+_config['Edge']['fit_params']):
+                            Edge_fitparams = np.loadtxt(froot+_config['Edge']['subfolder_name']+_config['Edge']['fit_params'], delimiter=_config['Edge']['fit_delimiter'])
                 else:
                     print('\nWARNING: Edge subfolder {0} not found'.format(_config['Edge']['subfolder_name']))
 
@@ -584,11 +632,17 @@ if __name__ == '__main__':
                     PIVz_data, PIVz_avg = LoadAllPIV(PIVz_root, PIVz_fnames, separator=_config['PIVz']['field_sep'], header=_config['PIVz']['hdr_len'],\
                                                      load_extra_cols=_config['PIV']['stress_cols'])
             
+            
+            
+            
+            
+            
+            # Build the figures
+            
             FindDropletCount = 0
             prev_ROIs = None
             prev_idx = None
             for fidx in range(len(imgs_fnames)):
-            # Build the figure
             
                 check_idx = True
                 if (PIV_root is not None and PIV_data is not None):
@@ -870,6 +924,7 @@ if __name__ == '__main__':
                     if (Edge_idx is not None and (_config['OUT']['edge_mask_PIV'] or _config['OUT']['edge_plot'] is not None or (_config['OUT']['plot_normalF'] is not None and Edge_forces is not None)) and len(save_ROIs)>0):
                         for dridx in range(len(global_drop_idx)):
                             cur_edge_idx = None
+                            cur_tmp_idx = None
                             if (_config['Edge']['idx_from_file'] == 'drop'):
                                 if (global_drop_idx[dridx] in Edge_idx):
                                     cur_edge_idx = Edge_idx.index(global_drop_idx[dridx])
@@ -878,7 +933,9 @@ if __name__ == '__main__':
                                     cur_edge_idx = Edge_idx.index(LastIntInStr(imgs_fnames[fidx]))
                             elif (_config['Edge']['idx_from_file'] == 'txt'):
                                 if (LastIntInStr(imgs_fnames[fidx]) in Edge_frame_idx):
-                                    cur_edge_idx = Edge_frame_idx.index(LastIntInStr(imgs_fnames[fidx]))
+                                    cur_tmp_idx = int(np.where(Edge_frame_idx == LastIntInStr(imgs_fnames[fidx]))[0])
+                                    if (Edge_file_idx[cur_tmp_idx] in Edge_idx):
+                                        cur_edge_idx = Edge_idx.index(Edge_file_idx[cur_tmp_idx])
                             else:
                                 if (global_drop_idx[dridx] <= len(Edge_pts)):
                                     cur_edge_idx = global_drop_idx[dridx]-1
@@ -887,9 +944,6 @@ if __name__ == '__main__':
                                 print('         WARNING: no edge found for {0}th droplet ({1})'.format(dridx, global_drop_idx[dridx]))
                                 
                             else:
-                                
-                                print('         {0}th droplet ({1}) linked to edge {2}'.format(dridx, global_drop_idx[dridx], cur_edge_idx))
-                                
                                 
                                 cur_edge = Edge_pts[cur_edge_idx]
                                 if (_config['Edge']['droplet_ref_frame'] is None):
@@ -913,35 +967,108 @@ if __name__ == '__main__':
                                         else:
                                             PIV_data[fidx]['u'] = np.ma.MaskedArray(PIV_data[fidx]['u'], cur_ma_mask)
                                 shifted_edge = [np.subtract(cur_edge[0], save_ROIs[dridx][2]), np.subtract(cur_edge[1], save_ROIs[dridx][0])]
+                                if Edge_fitparams is not None:
+                                    if (global_drop_idx[dridx] in Edge_fitparams[:,7]):
+                                        fitp_idx = int(np.where(Edge_fitparams[:,7]==global_drop_idx[dridx])[0])
+                                else:
+                                    fitp_idx = None
+                                
+                                print('         {0}th droplet ({1}) linked to edge {2} (fit params: {3})'.format(dridx, global_drop_idx[dridx], cur_edge_idx, fitp_idx))
+                                
+                                if fitp_idx is not None:
+                                    if cur_tmp_idx is not None and Edge_file_posx is not None:
+                                        cur_findx = Edge_file_posx[cur_tmp_idx] + _config['Edge']['idx_from_file_posoffset'][0]
+                                        cur_findy = Edge_file_posy[cur_tmp_idx] + _config['Edge']['idx_from_file_posoffset'][1]
+                                    else:
+                                        cur_findx = save_ROIs[dridx][2]
+                                        cur_findy = save_ROIs[dridx][0]
+                                    fit_theta = np.linspace(0, 2*np.pi, _config['OUT']['edge_fit_npts'], endpoint=True)
+                                    cur_rfit = Edge_fitparams[fitp_idx, 2] * (1.0 + Edge_fitparams[fitp_idx, 3] * np.cos(2*fit_theta) + Edge_fitparams[fitp_idx, 4] * np.cos(3*fit_theta))
+                                    cur_edge_fit = np.asarray([np.add(Edge_fitparams[fitp_idx, 0]+cur_findx, np.multiply(cur_rfit, np.cos(fit_theta))), 
+                                                               np.add(Edge_fitparams[fitp_idx, 1]+cur_findy, np.multiply(cur_rfit, np.sin(fit_theta)))])
+                                    shifted_edge_fit = [np.subtract(cur_edge_fit[0], save_ROIs[dridx][2]), np.subtract(cur_edge_fit[1], save_ROIs[dridx][0])]
+                                    cur_ctr_fit = [Edge_fitparams[fitp_idx, 0]+cur_findx, Edge_fitparams[fitp_idx, 1]+cur_findy]
+                                    shifted_ctr_fit = [cur_ctr_fit[0]-save_ROIs[dridx][2], cur_ctr_fit[1]-save_ROIs[dridx][0]]
+                                    cur_edge_fill = cur_edge_fit
+                                    shifted_edge_fill = shifted_edge_fit
+                                else:
+                                    cur_edge_fit = None
+                                    shifted_edge_fit = None
+                                    cur_edge_fill = cur_edge
+                                    shifted_edge_fill = shifted_edge
                                 
                                 if (_config['OUT']['edge_plot'] is not None):
                                     if (ax is not None):
                                         ax.plot(cur_edge[0], cur_edge[1], _config['OUT']['edge_plot'])
+                                        if (cur_edge_fit is not None and _config['OUT']['edge_fit_plot'] is not None):
+                                            ax.plot(cur_edge_fit[0], cur_edge_fit[1], _config['OUT']['edge_fit_plot'])
+                                        if (cur_ctr_fit is not None and _config['OUT']['center_fit_plot'] is not None):
+                                            ax.plot([cur_ctr_fit[0]], [cur_ctr_fit[1]], _config['OUT']['center_fit_plot'])
                                         if (_config['OUT']['edge_fill'] is not None):
-                                            ax.fill(cur_edge[0], cur_edge[1], **_config['OUT']['edge_fill'])
+                                            ax.fill(cur_edge_fill[0], cur_edge_fill[1], **_config['OUT']['edge_fill'])
                                     if (figc_axm is not None):
                                         figc_axm.plot(cur_edge[0], cur_edge[1], _config['OUT']['edge_plot'])
+                                        if (cur_edge_fit is not None and _config['OUT']['edge_fit_plot'] is not None):
+                                            figc_axm.plot(cur_edge_fit[0], cur_edge_fit[1], _config['OUT']['edge_fit_plot'])
+                                        if (cur_ctr_fit is not None and _config['OUT']['center_fit_plot'] is not None):
+                                            figc_axm.plot([cur_ctr_fit[0]], [cur_ctr_fit[1]], _config['OUT']['center_fit_plot'])
                                         if (_config['OUT']['edge_fill'] is not None):
-                                            figc_axm.fill(cur_edge[0], cur_edge[1], **_config['OUT']['edge_fill'])
+                                            figc_axm.fill(cur_edge_fill[0], cur_edge_fill[1], **_config['OUT']['edge_fill'])
                                     if (dridx < len(figz_list)):
                                         axz_list[dridx].plot(shifted_edge[0], shifted_edge[1], _config['OUT']['edge_plot'])
+                                        if (shifted_edge_fit is not None and _config['OUT']['edge_fit_plot'] is not None):
+                                            axz_list[dridx].plot(shifted_edge_fit[0], shifted_edge_fit[1], _config['OUT']['edge_fit_plot'])
+                                        if (shifted_ctr_fit is not None and _config['OUT']['center_fit_plot'] is not None):
+                                            axz_list[dridx].plot([shifted_ctr_fit[0]], [shifted_ctr_fit[1]], _config['OUT']['center_fit_plot'])
                                         if (_config['OUT']['edge_fill'] is not None):
-                                            axz_list[dridx].fill(shifted_edge[0], shifted_edge[1], **_config['OUT']['edge_fill'])
+                                            axz_list[dridx].fill(shifted_edge_fill[0], shifted_edge_fill[1], **_config['OUT']['edge_fill'])
                                     if (figc_axz is not None and dridx == _config['OUT']['combined_zoom_idx']):
                                         figc_axz.plot(shifted_edge[0], shifted_edge[1], _config['OUT']['edge_plot'])
+                                        if (shifted_edge_fit is not None and _config['OUT']['edge_fit_plot'] is not None):
+                                            figc_axz.plot(shifted_edge_fit[0], shifted_edge_fit[1], _config['OUT']['edge_fit_plot'])
+                                        if (shifted_ctr_fit is not None and _config['OUT']['center_fit_plot'] is not None):
+                                            figc_axz.plot([shifted_ctr_fit[0]], [shifted_ctr_fit[1]], _config['OUT']['center_fit_plot'])
                                         if (_config['OUT']['edge_fill'] is not None):
-                                            figc_axz.fill(shifted_edge[0], shifted_edge[1], **_config['OUT']['edge_fill'])
+                                            figc_axz.fill(shifted_edge_fill[0], shifted_edge_fill[1], **_config['OUT']['edge_fill'])
                                 
                                 if (_config['OUT']['plot_normalF'] is not None and Edge_forces is not None):
-                                    for ptidx in range(len(shifted_edge[0])):
-                                        cur_normalf = [Edge_forces[cur_edge_idx][0][ptidx]*_config['OUT']['normalF_scale'],\
-                                                       Edge_forces[cur_edge_idx][1][ptidx]*_config['OUT']['normalF_scale']]
-                                        if (ax is not None):
-                                            ax.arrow(cur_edge[0][ptidx], cur_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
-                                        if (figc_axm is not None):
-                                            figc_axm.arrow(cur_edge[0][ptidx], cur_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
-                                        if (figc_axz is not None and dridx == _config['OUT']['combined_zoom_idx']):
-                                            figc_axz.arrow(shifted_edge[0][ptidx], shifted_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+
+                                    if (_config['OUT']['plot_normalF_fit'] and fitp_idx is not None):
+                                        if (_config['OUT']['plot_normalF_fit_smoothT'] <= 0):
+                                            cur_sigma2 = Edge_fitparams[fitp_idx, 5]
+                                            cur_sigma3 = Edge_fitparams[fitp_idx, 6]
+                                        else:
+                                            cur_sigma2 = np.mean([Edge_fitparams[i, 5] for i in range(max(0, fitp_idx-_config['OUT']['plot_normalF_fit_smoothT']),
+                                                                                                  min(Edge_fitparams.shape[0], fitp_idx+_config['OUT']['plot_normalF_fit_smoothT']))\
+                                                                                   if Edge_fitparams[i, 9]==0])
+                                            cur_sigma3 = np.mean([Edge_fitparams[i, 6] for i in range(max(0, fitp_idx-_config['OUT']['plot_normalF_fit_smoothT']),
+                                                                                                  min(Edge_fitparams.shape[0], fitp_idx+_config['OUT']['plot_normalF_fit_smoothT']))\
+                                                                                   if Edge_fitparams[i, 9]==0])
+                                        if (_config['OUT']['plot_normalF_fit_maxorder'] > 2):
+                                            cur_fmag = cur_sigma2 * np.cos(2*fit_theta) + cur_sigma3 * np.cos(3*fit_theta)
+                                        else:
+                                            cur_fmag = cur_sigma2 * np.cos(2*fit_theta)
+                                            
+                                        for ptidx in range(len(cur_fmag)):
+                                            cur_normalf = [cur_fmag[ptidx]*np.cos(fit_theta[ptidx]), cur_fmag[ptidx]*np.sin(fit_theta[ptidx])]
+                                            
+                                            if (ax is not None):
+                                                ax.arrow(cur_edge_fit[0][ptidx], cur_edge_fit[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+                                            if (figc_axm is not None):
+                                                figc_axm.arrow(cur_edge_fit[0][ptidx], cur_edge_fit[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+                                            if (figc_axz is not None and dridx == _config['OUT']['combined_zoom_idx']):
+                                                figc_axz.arrow(shifted_edge_fit[0][ptidx], shifted_edge_fit[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+                                                
+                                    else:
+                                        for ptidx in range(len(shifted_edge[0])):
+                                            cur_normalf = [Edge_forces[cur_edge_idx][0][ptidx]*_config['OUT']['normalF_scale'],\
+                                                                     Edge_forces[cur_edge_idx][1][ptidx]*_config['OUT']['normalF_scale']]
+                                            if (ax is not None):
+                                                ax.arrow(cur_edge[0][ptidx], cur_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+                                            if (figc_axm is not None):
+                                                figc_axm.arrow(cur_edge[0][ptidx], cur_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
+                                            if (figc_axz is not None and dridx == _config['OUT']['combined_zoom_idx']):
+                                                figc_axz.arrow(shifted_edge[0][ptidx], shifted_edge[1][ptidx], cur_normalf[0], cur_normalf[1], **_config['OUT']['plot_normalF'])
                     
                     # OVERLAY
                     overlay_plot = None
@@ -1004,6 +1131,21 @@ if __name__ == '__main__':
                         
                         with warnings.catch_warnings():
                             warnings.simplefilter('ignore', RuntimeWarning)
+                            
+                            if (chEdgeUp is not None):
+                                if (ax is not None):
+                                    ax.fill_between(chEdgeUp[:,0], 0, chEdgeUp[:,1], **_config['OUT']['ch_edge_shade'])
+                                    ax.plot(chEdgeUp[:,0], chEdgeUp[:,1], '-', **_config['OUT']['ch_edge_line'])
+                                if (figc_axm is not None):
+                                    figc_axm.fill_between(chEdgeUp[:,0], 0, chEdgeUp[:,1], **_config['OUT']['ch_edge_shade'])
+                                    figc_axm.plot(chEdgeUp[:,0], chEdgeUp[:,1], '-', **_config['OUT']['ch_edge_line'])
+                            if (chEdgeDwn is not None):
+                                if (ax is not None):
+                                    ax.fill_between(chEdgeDwn[:,0], chEdgeDwn[:,1], img_arr_clip.shape[0]+1, **_config['OUT']['ch_edge_shade'])
+                                    ax.plot(chEdgeDwn[:,0], chEdgeDwn[:,1], '-', **_config['OUT']['ch_edge_line'])
+                                if (figc_axm is not None):
+                                    figc_axm.fill_between(chEdgeDwn[:,0], chEdgeDwn[:,1], img_arr_clip.shape[0]+1, **_config['OUT']['ch_edge_shade'])
+                                    figc_axm.plot(chEdgeDwn[:,0], chEdgeDwn[:,1], '-', **_config['OUT']['ch_edge_line'])
                             
                             if (overlay_plot is not None):
                                 my_cmap = _config['OUT']['overlay_cmap']                    
@@ -1093,7 +1235,12 @@ if __name__ == '__main__':
                                                 qkzc = figc_axz.quiverkey(Qzc, _config['OUT']['quiverkey'][0], _config['OUT']['quiverkey'][1],\
                                                                     _config['OUT']['quiverkey'][2], _config['OUT']['qk_label'], labelpos='E', coordinates='figure')
                                             
-                            
+                            if (ax is not None):
+                                ax.set_xlim([-0.5, img_arr_clip.shape[1]-0.5])
+                                ax.set_ylim([img_arr_clip.shape[0]-0.5, -0.5])
+                            if (figc_axm is not None):
+                                figc_axm.set_xlim([-0.5, img_arr_clip.shape[1]-0.5])
+                                figc_axm.set_ylim([img_arr_clip.shape[0]-0.5, -0.5])
                             if (_config['OUT']['hide_axes']):
                                 if (ax is not None):
                                     ax.axis('off')
