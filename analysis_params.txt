@@ -1,0 +1,47 @@
+{
+  "froot": "E:\\Rheoflu\\Tween80_Fig2",
+  "img_name": "tween80_0p56_500ulh_w4_20251103_21622_PM_20251103_021631_PM",
+  "bkg_avgrange": [
+    0,
+    1000
+  ],
+  "topedge_fpath": "auto",
+  "bottomedge_fpath": "auto",
+  "px_size": 0.7,
+  "fps": 4126,
+  "eta": 0.058,
+  "design_omega": 700,
+  "filter_d": 35,
+  "crop_margin_x": 200,
+  "crop_size_y": 200,
+  "track_minmass": 4000,
+  "track_maxsize": 80,
+  "track_nprocs": 4,
+  "search_range": [
+    5,
+    40
+  ],
+  "filter_range": [
+    20,
+    30
+  ],
+  "bkgcorr_off": 150,
+  "track_zRange": [
+    0,
+    15113
+  ],
+  "roi_test_frame": 83,
+  "filter_ss_maxtomean": 4,
+  "edge_roi_size": 40,
+  "edge_blur": 2,
+  "edge_dbscan_eps": 2.1,
+  "edge_thr": 4.5,
+  "edge_iterN": 4,
+  "save_all_edgefigs": false,
+  "filter_r_thr": 100,
+  "filter_rbar_relstd": 0.02,
+  "filter_rtheta_mserr": 0.5,
+  "ss_fit_margin": 5,
+  "ss_param_bound": 0,
+  "ss_globalfit_iter": 4
+}

@@ -1,3 +1,4 @@
+import os
 import numpy as np
 
 from scipy.signal import argrelmin
@@ -205,14 +206,17 @@ def AnalyzeChannelShape(channel_img, topedge, bottomedge, crop=None, px_size=1, 
     if (crop[3] <= 0):
         crop[3] = img_arr.shape[0]+crop[3]
     if isinstance(topedge, str):
-        topedge = np.loadtxt(topedge)
+        if os.path.isfile(topedge):
+            topedge = np.loadtxt(topedge)
     if isinstance(bottomedge, str):
-        bottomedge = np.loadtxt(bottomedge)
-    topedge *= px_size
-    bottomedge *= px_size
-
-    spl_top = UnivariateSpline(topedge[:,0], topedge[:,1], s=spl_smoothf)
-    spl_bottom = UnivariateSpline(bottomedge[:,0], bottomedge[:,1], s=spl_smoothf)
+        if os.path.isfile(bottomedge):
+            bottomedge = np.loadtxt(bottomedge)
+    if topedge is not None:
+        topedge *= px_size
+        spl_top = UnivariateSpline(topedge[:,0], topedge[:,1], s=spl_smoothf)
+    if bottomedge is not None:
+        bottomedge *= px_size
+        spl_bottom = UnivariateSpline(bottomedge[:,0], bottomedge[:,1], s=spl_smoothf)
     spl_xarr = np.arange(int(img_arr.shape[1]*px_size))
     
     x, L = 1e-6*spl_xarr, 1e-6*np.abs(spl_top(spl_xarr) - spl_bottom(spl_xarr))

@@ -1,7 +1,56 @@
 import os
+import logging
+import json
+import datetime
 import numpy as np
 import tifffile
 import cv2
+
+def load_params(param_fpath, kwargs):
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    defpar_path = os.path.join(script_dir, 'default_params.txt')
+    with open(defpar_path, 'r') as f:
+        def_params = json.load(f)
+        print('Default analysis parameters loaded from configuration file: ' + defpar_path)
+    if os.path.isfile(param_fpath):
+        with open(param_fpath, 'r') as f:
+            params = json.load(f)
+            print('Analysis parameters loaded from configuration file: ' + param_fpath)
+    for k, val in kwargs.items():
+        if k in params:
+            print(' - param[{0}] updated from {1} to {2} using function kwargs'.format(k, params[k], kwargs[k]))
+        else:
+            print(' - param[{0}]={1} added using function kwargs'.format(k, kwargs[k]))
+        params[k] = kwargs[k]
+    def_keys = [k for k in def_params if k not in params]
+    if len(def_keys)>0:
+        print('{0} parameters absent in parameter file - default parameters used instead'.format(len(def_keys)))
+        for k in def_keys:
+            params[k] = def_params[k]
+            print(' - {0} : {1}'.format(k, params[k]))
+    return params
+
+def setup_logger(logfpath):
+    fout = open(logfpath, 'a')
+    fout.write('\nLogger started on: ' + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    return fout
+
+def close_logger(flog):
+    flog.write('\nLogger ended on: ' + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    flog.close()
+    
+def printlog(smsg, flog=None, flush=True, prefix='\n'):
+    print(smsg)
+    if flog is not None:
+        flog.write(prefix + smsg)
+        if flush:
+            flog.flush()
+
+def get_stack_headlen(fpath):
+    with tifffile.TiffFile(fpath) as tif:
+        off_bytes = tif.pages[0].dataoffsets
+    return off_bytes
 
 def get_stack_shape(fpath):
     with tifffile.TiffFile(fpath) as tif:
