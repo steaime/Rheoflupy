@@ -45,6 +45,29 @@ def solve_dimensional(omega, sigma, L0=1e-4, nperiods=2, npts=1000, q=1e-4, eta=
     else:
         return x, L, t
     
+def creep_length_dimensionless(sigma_tilde, tmax_tilde=1):
+    return (1./sigma_tilde) * (1-np.exp(-tmax_tilde))
+
+def creep_dimensionless(sigma_tilde, tmax_tilde=1, npts=1000):
+    xt_max = creep_length_dimensionless(sigma_tilde, tmax_tilde)
+    xt = np.linspace(0, xt_max, npts)
+    Lt = 1/(1-sigma_tilde*xt)
+    return xt, Lt
+    
+def creep_length(sigma, tmax, L0=1e-4, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    return L0 * creep_length_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta)     
+            # = (q*eta / (beta*sigma*L0)) * (1 - np.exp(-zeta*sigma*tmax/eta))
+    
+def creep_dimensional(sigma, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    #xmax = creep_length(sigma, tmax, L0=L0, q=q, eta=eta, beta=beta, zeta=zeta)
+    #x = np.linspace(0, xmax, npts)
+    #L = L0 / (1 - x * beta*sigma*L0/(q*eta))
+    xt, Lt = creep_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta, npts=npts)
+    return xt*L0, Lt*L0
+
+def solve_generalized(t, sigma, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    return
+    
 # Channel shape design functions (multiple stress/freq)
 
 def concatenate_dimensionless(sigma_tilde_list, rel_k_list=None, nperiods=2, pts_per_sol=1000):
