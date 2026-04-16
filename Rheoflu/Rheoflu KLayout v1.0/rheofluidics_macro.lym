@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description>Rheofluidics channel generator (Milani et al. 2026)</description>
+ <version>1.0</version>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <shortcut/>
+ <show-in-menu>true</show-in-menu>
+ <group-name>Rheofluidics</group-name>
+ <menu-path>macros_menu.end</menu-path>
+ <interpreter>ruby</interpreter>
+ <dsl-interpreter-name/>
+ <text>
+# =============================================================================
+# Rheofluidics Channel Generator
+# Based on: Milani et al., arXiv:2601.07461 (2026)
+#
+# Generates the microfluidic channel shape L(x) that imposes an oscillatory
+# extensional stress sigma_ext(t) = sigma0 * sin(omega*t) on flowing objects.
+#
+# The channel profile solves eq.(1) of the paper:
+#   dL/dx = L^2 * (sigma0/q*eta) * sin(omega/q * integral_0^x L(s)ds)
+#
+# In dimensionless form (sigma_tilde = sigma0*L0^2, omega_tilde = omega*L0^2/q):
+#   dL~/dx~ = L~^2 * sigma_tilde * sin(omega_tilde * integral_0^{x~} L~(s~)ds~)
+#
+# Parameters exposed (SI units, converted to DBU internally):
+#   L0            : minimum channel half-width at constriction [m]
+#   sigma_tilde   : dimensionless stress amplitude = sigma0*L0^2 / (q*eta)
+#   omega_tilde   : dimensionless frequency = omega*L0^2 / q  (= omega/q * L0^2)
+#   n_periods     : number of oscillation periods per segment
+#   channel_length: total channel length [m] (sets q via k scaling)
+#   W_connect     : width of connecting straight channel [m]
+#   L_taper       : length of linear taper between W_connect and L0 [m]
+#   layer         : GDS layer number
+#   datatype      : GDS datatype number
+#   dbu           : database unit [m/unit], default 1e-9 (1 nm)
+#
+# Mode: CONSTANT (single sigma_tilde, omega_tilde)
+#       CHIRP    (arrays of sigma_tilde, omega_tilde, one per segment)
+# =============================================================================
+
+module Rheofluidics
+
+  # ---------------------------------------------------------------------------
+  # Numerical ODE solver (pure Ruby, no external dependencies)
+  # Solves the dimensionless ODE using RK4
+  # ---------------------------------------------------------------------------
+
+  # Compute L~(t~) by RK4 integration of dL~/dt~ = L~ * sigma_tilde * sin(t~)
+  # with L~(0) = 1, t~ in [0, 2*pi*n_periods]
+  def self.solve_Lt(sigma_tilde, n_periods, npts)
+    tt = Array.new(npts) { |i| i * 2.0 * Math::PI * n_periods / (npts - 1) }
+    lt = Array.new(npts, 1.0)
+    dt = tt[1] - tt[0]
+
+    (0...npts-1).each do |i|
+      t = tt[i]
+      l = lt[i]
+      k1 = l * sigma_tilde * Math.sin(t)
+      k2 = (l + 0.5*dt*k1) * sigma_tilde * Math.sin(t + 0.5*dt)
+      k3 = (l + 0.5*dt*k2) * sigma_tilde * Math.sin(t + 0.5*dt)
+      k4 = (l + dt*k3)     * sigma_tilde * Math.sin(t + dt)
+      lt[i+1] = l + (dt/6.0) * (k1 + 2*k2 + 2*k3 + k4)
+    end
+    [tt, lt]
+  end
+
+  # Recover dimensionless spatial coordinate x~ from t~ and L~
+  # dx~ = dt~ / L~  (from vx = q/L and dt = dx/vx)
+  def self.compute_xt(tt, lt)
+    npts = tt.size
+    xt = Array.new(npts, 0.0)
+    (1...npts).each do |i|
+      dt = tt[i] - tt[i-1]
+      xt[i] = xt[i-1] + dt * 2.0 / (lt[i-1] + lt[i])   # trapezoidal
+    end
+    xt
+  end
+
+  # Solve one segment in dimensionless units, return [xt, lt]
+  def self.solve_segment_dimless(sigma_tilde, n_periods, npts)
+    tt, lt = solve_Lt(sigma_tilde, n_periods, npts)
+    xt = compute_xt(tt, lt)
+    [xt, lt]
+  end
+
+  # ---------------------------------------------------------------------------
+  # Multi-segment solver with total length constraint
+  # Scales xt so that the concatenated profile has the desired channel_length.
+  # Returns [x_phys, L_phys] in metres.
+  # ---------------------------------------------------------------------------
+  def self.solve_channel(sigma_tilde_list, omega_tilde_list, L0, channel_length, n_periods, npts)
+    # For each segment, solve dimensionless profile
+    segments = []
+    sigma_tilde_list.zip(omega_tilde_list).each do |st, ot|
+      xt, lt = solve_segment_dimless(st, n_periods, npts)
+      # omega_tilde = omega*L0^2/q sets the x-scale relative to L0
+      # k = omega_tilde for each segment; relative k sets x-stretch between segments
+      segments << { xt: xt, lt: lt, omega_tilde: ot }
+    end
+
+    # Concatenate with relative x-scaling by omega_tilde
+    # x_phys_i = xt_i / (omega_tilde_i / omega_tilde_ref) * (L0 / k_global)
+    ot_ref = segments[0][:omega_tilde]
+    all_x = []
+    all_L = []
+    x_offset = 0.0
+
+    segments.each do |seg|
+      rel_k = seg[:omega_tilde] / ot_ref
+      xt = seg[:xt].map { |v| v / rel_k }
+      lt = seg[:lt]
+      start = (all_x.empty? ? 0 : 1)
+      xt[start..].each_with_index do |xv, j|
+        all_x << xv + x_offset
+        all_L << lt[start + j]
+      end
+      x_offset = all_x.last
+    end
+
+    # Scale to physical channel_length
+    x_scale = channel_length / (all_x.last * L0)
+    all_x_phys = all_x.map { |v| v * L0 * x_scale }
+    all_L_phys = all_L.map { |v| v * L0 }
+
+    [all_x_phys, all_L_phys]
+  end
+
+  # ---------------------------------------------------------------------------
+  # Build polygon points for the full channel
+  # Returns array of [x, y] in metres (physical coordinates)
+  # ---------------------------------------------------------------------------
+  def self.build_polygon(x_arr, L_arr, W_connect, L_taper)
+    # Upper profile: taper_in | channel | taper_out
+    upper = []
+    lower = []
+
+    L0 = L_arr[0]  # half-width at constriction (start)
+    W_half = W_connect / 2.0
+
+    # Taper in: from -L_taper to 0
+    n_taper = 20
+    (0..n_taper).each do |i|
+      frac = i.to_f / n_taper
+      x = -L_taper + frac * L_taper
+      y = W_half + frac * (L0 - W_half)
+      upper << [x, y]
+      lower << [x, -y]
+    end
+
+    # Channel body (skip first point, already at x=0)
+    x_arr.each_with_index do |x, i|
+      next if i == 0
+      upper << [x, L_arr[i]]
+      lower << [x, -L_arr[i]]
+    end
+
+    # Taper out: from channel end to channel_end + L_taper
+    x_end = x_arr.last
+    L_end = L_arr.last
+    (1..n_taper).each do |i|
+      frac = i.to_f / n_taper
+      x = x_end + frac * L_taper
+      y = L_end + frac * (W_half - L_end)
+      upper << [x, y]
+      lower << [x, -y]
+    end
+
+    # Build closed polygon: upper left->right, lower right->left
+    pts = upper + lower.reverse
+    pts
+  end
+
+  # ---------------------------------------------------------------------------
+  # Convert physical [x,y] in metres to KLayout DPoint (DBU units)
+  # ---------------------------------------------------------------------------
+  def self.to_dpoints(pts, dbu)
+    pts.map { |x, y| RBA::DPoint.new(x / dbu, y / dbu) }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Main entry point: show dialog and generate layout
+  # ---------------------------------------------------------------------------
+  def self.run
+    dialog = RBA::QDialog.new(RBA::Application.instance.main_window)
+    dialog.windowTitle = "Rheofluidics Channel Generator"
+    dialog.resize(480, 560)
+
+    layout_w = RBA::QVBoxLayout.new(dialog)
+
+    # Mode selector
+    mode_group = RBA::QGroupBox.new("Mode", dialog)
+    mode_layout = RBA::QHBoxLayout.new(mode_group)
+    rb_constant = RBA::QRadioButton.new("Constant", mode_group)
+    rb_chirp    = RBA::QRadioButton.new("Chirp", mode_group)
+    rb_constant.checked = true
+    mode_layout.addWidget(rb_constant)
+    mode_layout.addWidget(rb_chirp)
+    layout_w.addWidget(mode_group)
+
+    # Helper: labeled row
+    fields = {}
+    add_field = lambda do |parent_layout, label, key, default|
+      row = RBA::QHBoxLayout.new
+      lbl = RBA::QLabel.new(label, dialog)
+      lbl.minimumWidth = 280
+      edit = RBA::QLineEdit.new(dialog)
+      edit.text = default.to_s
+      row.addWidget(lbl)
+      row.addWidget(edit)
+      parent_layout.addLayout(row)
+      fields[key] = edit
+    end
+
+    # Channel parameters group
+    ch_group = RBA::QGroupBox.new("Channel parameters", dialog)
+    ch_layout = RBA::QVBoxLayout.new(ch_group)
+
+    add_field.call(ch_layout, "L0 — constriction half-width [µm]",           :L0,            "50")
+    add_field.call(ch_layout, "sigma_tilde × L0² (dimensionless stress)",    :sigma_tilde,   "0.23")
+    add_field.call(ch_layout, "omega_tilde × L0² (dimensionless frequency)", :omega_tilde,   "0.46")
+    add_field.call(ch_layout, "N periods per segment",                        :n_periods,     "2")
+    add_field.call(ch_layout, "Total channel length [µm]",                    :chan_length,   "10000")
+    add_field.call(ch_layout, "Pts per segment (resolution)",                 :npts,          "500")
+
+    # Chirp extra
+    chirp_group = RBA::QGroupBox.new("Chirp segments (comma-separated lists)", dialog)
+    chirp_layout = RBA::QVBoxLayout.new(chirp_group)
+    add_field.call(chirp_layout, "sigma_tilde values",  :sigma_list, "0.10, 0.15, 0.23")
+    add_field.call(chirp_layout, "omega_tilde values",  :omega_list, "0.20, 0.33, 0.46")
+    chirp_group.enabled = false
+    layout_w.addWidget(ch_group)
+    layout_w.addWidget(chirp_group)
+
+    # Toggle chirp group
+    rb_chirp.toggled { |on| chirp_group.enabled = on }
+
+    # Connection parameters
+    conn_group = RBA::QGroupBox.new("Connection to straight channel", dialog)
+    conn_layout = RBA::QVBoxLayout.new(conn_group)
+    add_field.call(conn_layout, "W_connect — straight channel width [µm]", :W_connect, "200")
+    add_field.call(conn_layout, "L_taper — taper length [µm]",             :L_taper,   "200")
+    layout_w.addWidget(conn_group)
+
+    # Layer
+    layer_group = RBA::QGroupBox.new("Layer", dialog)
+    layer_layout = RBA::QVBoxLayout.new(layer_group)
+    add_field.call(layer_layout, "Layer number",   :layer,    "1")
+    add_field.call(layer_layout, "Datatype",       :datatype, "0")
+    layout_w.addWidget(layer_group)
+
+    # Buttons
+    btn_layout = RBA::QHBoxLayout.new
+    btn_ok     = RBA::QPushButton.new("Generate", dialog)
+    btn_cancel = RBA::QPushButton.new("Cancel",   dialog)
+    btn_layout.addWidget(btn_ok)
+    btn_layout.addWidget(btn_cancel)
+    layout_w.addLayout(btn_layout)
+
+    btn_cancel.clicked { dialog.reject }
+
+    btn_ok.clicked do
+      begin
+        dbu = RBA::Application.instance.main_window.current_view.cellview(0).layout.dbu * 1e-6  # m/DBU
+
+        L0          = fields[:L0].text.to_f         * 1e-6
+        n_periods   = fields[:n_periods].text.to_i
+        chan_length  = fields[:chan_length].text.to_f * 1e-6
+        npts        = fields[:npts].text.to_i
+        W_connect   = fields[:W_connect].text.to_f  * 1e-6
+        L_taper     = fields[:L_taper].text.to_f    * 1e-6
+        layer_n     = fields[:layer].text.to_i
+        datatype_n  = fields[:datatype].text.to_i
+
+        if rb_constant.checked
+          st = fields[:sigma_tilde].text.to_f
+          ot = fields[:omega_tilde].text.to_f
+          sigma_tilde_list = [st]
+          omega_tilde_list = [ot]
+        else
+          sigma_tilde_list = fields[:sigma_list].text.split(",").map(&:to_f)
+          omega_tilde_list = fields[:omega_list].text.split(",").map(&:to_f)
+          raise "sigma and omega lists must have the same length" unless sigma_tilde_list.size == omega_tilde_list.size
+        end
+
+        x_arr, L_arr = Rheofluidics.solve_channel(sigma_tilde_list, omega_tilde_list, L0, chan_length, n_periods, npts)
+        pts_phys = Rheofluidics.build_polygon(x_arr, L_arr, W_connect, L_taper)
+        dpts = Rheofluidics.to_dpoints(pts_phys, dbu)
+
+        view   = RBA::Application.instance.main_window.current_view
+        layout = view.cellview(0).layout
+        cell   = view.cellview(0).cell
+        layer  = layout.layer(layer_n, datatype_n)
+
+        poly = RBA::DPolygon.new(dpts)
+        cell.shapes(layer).insert(poly)
+        view.zoom_fit
+
+        RBA::MessageBox.info("Done", "Rheofluidics channel inserted.\n#{pts_phys.size} polygon vertices.", RBA::MessageBox::Ok)
+        dialog.accept
+      rescue => e
+        RBA::MessageBox.critical("Error", e.message + "\n" + e.backtrace[0..3].join("\n"), RBA::MessageBox::Ok)
+      end
+    end
+
+    dialog.exec
+  end
+
+end
+
+Rheofluidics.run
+ </text>
+</klayout-macro>

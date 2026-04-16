@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description>Rheofluidics PCell Library (Milani et al. 2026)</description>
+ <version>1.0</version>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>true</autorun>
+ <autorun-early>false</autorun-early>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>ruby</interpreter>
+ <dsl-interpreter-name/>
+ <text>
+# =============================================================================
+# Rheofluidics PCell Library
+# Based on: Milani et al., arXiv:2601.07461 (2026)
+#
+# Provides two PCells under the library "Rheofluidics":
+#   1. RheoChannel_Constant  — single (sigma_tilde, omega_tilde)
+#   2. RheoChannel_Chirp     — comma-separated lists of (sigma_tilde, omega_tilde)
+#
+# Both PCells share the same underlying geometry engine.
+#
+# Install: place this .lym file in KLayout's autorun macros directory
+#   Linux:   ~/.klayout/macros/
+#   macOS:   ~/Library/Application Support/klayout/macros/
+#   Windows: %APPDATA%\klayout\macros\
+# Then restart KLayout. The library appears in the "Libraries" panel.
+# =============================================================================
+
+module RheofluidicsPCells
+
+  # ---------------------------------------------------------------------------
+  # Geometry engine (same numerics as the standalone macro)
+  # ---------------------------------------------------------------------------
+  module Engine
+
+    def self.solve_Lt_rk4(sigma_tilde, n_periods, npts)
+      tt = Array.new(npts) { |i| i * 2.0 * Math::PI * n_periods / (npts - 1) }
+      lt = Array.new(npts, 1.0)
+      dt = tt[1] - tt[0]
+      (0...npts-1).each do |i|
+        t = tt[i]; l = lt[i]
+        k1 = l * sigma_tilde * Math.sin(t)
+        k2 = (l + 0.5*dt*k1) * sigma_tilde * Math.sin(t + 0.5*dt)
+        k3 = (l + 0.5*dt*k2) * sigma_tilde * Math.sin(t + 0.5*dt)
+        k4 = (l + dt*k3)     * sigma_tilde * Math.sin(t + dt)
+        lt[i+1] = l + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
+      end
+      [tt, lt]
+    end
+
+    def self.compute_xt(tt, lt)
+      xt = Array.new(tt.size, 0.0)
+      (1...tt.size).each do |i|
+        dt = tt[i] - tt[i-1]
+        xt[i] = xt[i-1] + dt * 2.0 / (lt[i-1] + lt[i])
+      end
+      xt
+    end
+
+    def self.solve_channel(sigma_tilde_list, omega_tilde_list, L0, channel_length, n_periods, npts)
+      segments = sigma_tilde_list.zip(omega_tilde_list).map do |st, ot|
+        tt, lt = solve_Lt_rk4(st, n_periods, npts)
+        xt = compute_xt(tt, lt)
+        { xt: xt, lt: lt, omega_tilde: ot }
+      end
+
+      ot_ref   = segments[0][:omega_tilde]
+      all_x    = []
+      all_L    = []
+      x_offset = 0.0
+
+      segments.each do |seg|
+        rel_k = seg[:omega_tilde] / ot_ref
+        xt = seg[:xt].map { |v| v / rel_k }
+        lt = seg[:lt]
+        start = all_x.empty? ? 0 : 1
+        xt[start..].each_with_index do |xv, j|
+          all_x << xv + x_offset
+          all_L << lt[start + j]
+        end
+        x_offset = all_x.last
+      end
+
+      x_scale    = channel_length / (all_x.last * L0)
+      x_phys     = all_x.map { |v| v * L0 * x_scale }
+      L_phys     = all_L.map { |v| v * L0 }
+      [x_phys, L_phys]
+    end
+
+    def self.build_polygon_dbu(x_arr, L_arr, W_connect, L_taper, dbu, n_taper: 30)
+      upper = []
+      lower = []
+      W_half = W_connect / 2.0
+      L0_half = L_arr[0]
+
+      # Taper in
+      (0..n_taper).each do |i|
+        frac = i.to_f / n_taper
+        x = -L_taper + frac * L_taper
+        y = W_half + frac * (L0_half - W_half)
+        upper << RBA::Point.new((x / dbu).round, (y / dbu).round)
+        lower << RBA::Point.new((x / dbu).round, (-y / dbu).round)
+      end
+
+      # Channel body
+      x_arr.each_with_index do |x, i|
+        next if i == 0
+        upper << RBA::Point.new((x / dbu).round, (L_arr[i] / dbu).round)
+        lower << RBA::Point.new((x / dbu).round, (-L_arr[i] / dbu).round)
+      end
+
+      # Taper out
+      x_end = x_arr.last
+      L_end = L_arr.last
+      (1..n_taper).each do |i|
+        frac = i.to_f / n_taper
+        x = x_end + frac * L_taper
+        y = L_end + frac * (W_half - L_end)
+        upper << RBA::Point.new((x / dbu).round, (y / dbu).round)
+        lower << RBA::Point.new((x / dbu).round, (-y / dbu).round)
+      end
+
+      RBA::Polygon.new(upper + lower.reverse)
+    end
+
+  end  # module Engine
+
+  # ---------------------------------------------------------------------------
+  # Base PCell — shared produce logic
+  # ---------------------------------------------------------------------------
+  class RheoChannelBase < RBA::PCellDeclarationHelper
+
+    def initialize
+      super
+      # Common parameters
+      param :L0,            TypeDouble, "Constriction half-width L0 [µm]",             default: 50.0
+      param :n_periods,     TypeInt,    "Periods per segment",                          default: 2
+      param :channel_length,TypeDouble, "Total channel length [µm]",                   default: 10000.0
+      param :npts,          TypeInt,    "Points per segment (resolution)",              default: 500
+      param :W_connect,     TypeDouble, "Connecting channel width [µm]",               default: 200.0
+      param :L_taper,       TypeDouble, "Taper length [µm]",                           default: 200.0
+      param :layer,         TypeLayer,  "Layer",                                        default: RBA::LayerInfo.new(1, 0)
+    end
+
+    def display_text_impl
+      "RheoChannel"
+    end
+
+    def coerce_parameters_impl
+      # Ensure npts is at least 100
+      set_npts([npts, 100].max)
+    end
+
+    def produce_impl(sigma_tilde_list, omega_tilde_list)
+      dbu = layout.dbu * 1e-6  # m per DBU
+
+      L0_m          = L0            * 1e-6
+      chan_length_m  = channel_length * 1e-6
+      W_connect_m   = W_connect     * 1e-6
+      L_taper_m     = L_taper       * 1e-6
+
+      x_arr, L_arr = Engine.solve_channel(
+        sigma_tilde_list, omega_tilde_list,
+        L0_m, chan_length_m, n_periods, npts
+      )
+
+      poly = Engine.build_polygon_dbu(x_arr, L_arr, W_connect_m, L_taper_m, dbu)
+      cell.shapes(layer_layer).insert(poly)
+    end
+
+  end  # class RheoChannelBase
+
+  # ---------------------------------------------------------------------------
+  # PCell 1: Constant — single (sigma_tilde, omega_tilde)
+  # ---------------------------------------------------------------------------
+  class RheoChannel_Constant < RheoChannelBase
+
+    def initialize
+      super
+      param :sigma_tilde, TypeDouble, "sigma_tilde × L0² (dimensionless stress)",    default: 0.23
+      param :omega_tilde, TypeDouble, "omega_tilde × L0² (dimensionless frequency)", default: 0.46
+    end
+
+    def display_text_impl
+      "RheoChannel_Constant(L0=#{L0}µm, σ̃=#{sigma_tilde}, ω̃=#{omega_tilde}, N=#{n_periods})"
+    end
+
+    def produce_impl
+      super([sigma_tilde], [omega_tilde])
+    end
+
+  end  # class RheoChannel_Constant
+
+  # ---------------------------------------------------------------------------
+  # PCell 2: Chirp — comma-separated lists of (sigma_tilde, omega_tilde)
+  # ---------------------------------------------------------------------------
+  class RheoChannel_Chirp < RheoChannelBase
+
+    def initialize
+      super
+      param :sigma_tilde_list, TypeString, "sigma_tilde values (comma-separated)",    default: "0.10, 0.15, 0.23"
+      param :omega_tilde_list, TypeString, "omega_tilde values (comma-separated)",    default: "0.20, 0.33, 0.46"
+    end
+
+    def display_text_impl
+      n = sigma_tilde_list.split(",").size
+      "RheoChannel_Chirp(L0=#{L0}µm, #{n} segments, N=#{n_periods}/seg)"
+    end
+
+    def coerce_parameters_impl
+      super
+      # Validate list lengths match
+      sl = sigma_tilde_list.split(",").map(&:strip).reject(&:empty?)
+      ol = omega_tilde_list.split(",").map(&:strip).reject(&:empty?)
+      if sl.size != ol.size
+        raise "sigma_tilde and omega_tilde lists must have the same number of entries"
+      end
+    end
+
+    def produce_impl
+      sl = sigma_tilde_list.split(",").map(&:to_f)
+      ol = omega_tilde_list.split(",").map(&:to_f)
+      super(sl, ol)
+    end
+
+  end  # class RheoChannel_Chirp
+
+  # ---------------------------------------------------------------------------
+  # Library registration
+  # ---------------------------------------------------------------------------
+  class RheofluidicsLib < RBA::Library
+
+    def initialize
+      self.description = "Rheofluidics channel PCells (Milani et al. 2026)"
+
+      layout.register_pcell("RheoChannel_Constant", RheoChannel_Constant.new)
+      layout.register_pcell("RheoChannel_Chirp",    RheoChannel_Chirp.new)
+
+      register("Rheofluidics")
+    end
+
+  end  # class RheofluidicsLib
+
+  # Instantiate and register the library
+  RheofluidicsLib.new
+
+end  # module RheofluidicsPCells
+ </text>
+</klayout-macro>
