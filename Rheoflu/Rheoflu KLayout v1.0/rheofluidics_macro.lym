@@ -14,7 +14,7 @@
  <menu-path>macros_menu.end</menu-path>
  <interpreter>ruby</interpreter>
  <dsl-interpreter-name/>
- <text>
+ <text><![CDATA[
 # =============================================================================
 # Rheofluidics Channel Generator
 # Based on: Milani et al., arXiv:2601.07461 (2026)
@@ -221,11 +221,11 @@ module Rheofluidics
     ch_group = RBA::QGroupBox.new("Channel parameters", dialog)
     ch_layout = RBA::QVBoxLayout.new(ch_group)
 
-    add_field.call(ch_layout, "L0 — constriction half-width [µm]",           :L0,            "50")
-    add_field.call(ch_layout, "sigma_tilde × L0² (dimensionless stress)",    :sigma_tilde,   "0.23")
-    add_field.call(ch_layout, "omega_tilde × L0² (dimensionless frequency)", :omega_tilde,   "0.46")
+    add_field.call(ch_layout, "L0 -- constriction half-width [umm]",           :L0,            "50")
+    add_field.call(ch_layout, "sigma_tilde x L0^2 (dimensionless stress)",    :sigma_tilde,   "0.23")
+    add_field.call(ch_layout, "omega_tilde x L0^2 (dimensionless frequency)", :omega_tilde,   "0.46")
     add_field.call(ch_layout, "N periods per segment",                        :n_periods,     "2")
-    add_field.call(ch_layout, "Total channel length [µm]",                    :chan_length,   "10000")
+    add_field.call(ch_layout, "Total channel length [umm]",                    :chan_length,   "10000")
     add_field.call(ch_layout, "Pts per segment (resolution)",                 :npts,          "500")
 
     # Chirp extra
@@ -243,8 +243,8 @@ module Rheofluidics
     # Connection parameters
     conn_group = RBA::QGroupBox.new("Connection to straight channel", dialog)
     conn_layout = RBA::QVBoxLayout.new(conn_group)
-    add_field.call(conn_layout, "W_connect — straight channel width [µm]", :W_connect, "200")
-    add_field.call(conn_layout, "L_taper — taper length [µm]",             :L_taper,   "200")
+    add_field.call(conn_layout, "W_connect -- straight channel width [umm]", :W_connect, "200")
+    add_field.call(conn_layout, "L_taper -- taper length [umm]",             :L_taper,   "200")
     layout_w.addWidget(conn_group)
 
     # Layer
@@ -314,5 +314,5 @@ module Rheofluidics
 end
 
 Rheofluidics.run
- </text>
+ ]]></text>
 </klayout-macro>
