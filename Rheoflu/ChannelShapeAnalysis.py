@@ -170,8 +170,8 @@ def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, ret
     if q is not None:
         ax2 = [cax.twinx() for cax in ax]
         stress = stress_from_shape(x, L, q=q, eta=eta)
-        ax2[0].plot(t, stress, 'r:')
-        ax2[1].plot(x*1e3, stress, 'r:')
+        ax2[0].plot(t[1:-1], stress[1:-1], 'r:')
+        ax2[1].plot(x[1:-1]*1e3, stress[1:-1], 'r:')
         ax2[0].plot(t[min_idx], stress[min_idx], 'r+')
         ax2[1].plot(x[min_idx]*1e3, stress[min_idx], 'r+')
         ax2[1].set_ylabel(r'$\sigma$ [Pa]')

@@ -45,25 +45,55 @@ def solve_dimensional(omega, sigma, L0=1e-4, nperiods=2, npts=1000, q=1e-4, eta=
     else:
         return x, L, t
     
+# Channel shape design functions (creep and relaxation)
+    
 def creep_length_dimensionless(sigma_tilde, tmax_tilde=1):
-    return (1./sigma_tilde) * (1-np.exp(-tmax_tilde))
+    return (1./sigma_tilde) * (np.exp(tmax_tilde)-1)
 
 def creep_dimensionless(sigma_tilde, tmax_tilde=1, npts=1000):
     xt_max = creep_length_dimensionless(sigma_tilde, tmax_tilde)
     xt = np.linspace(0, xt_max, npts)
-    Lt = 1/(1-sigma_tilde*xt)
+    Lt = 1/(1+sigma_tilde*xt)
     return xt, Lt
     
 def creep_length(sigma, tmax, L0=1e-4, q=1e-4, eta=1e-3, beta=1, zeta=1):
-    return L0 * creep_length_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta)     
-            # = (q*eta / (beta*sigma*L0)) * (1 - np.exp(-zeta*sigma*tmax/eta))
+    return L0 * creep_length_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta)
     
 def creep_dimensional(sigma, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
-    #xmax = creep_length(sigma, tmax, L0=L0, q=q, eta=eta, beta=beta, zeta=zeta)
-    #x = np.linspace(0, xmax, npts)
-    #L = L0 / (1 - x * beta*sigma*L0/(q*eta))
-    xt, Lt = creep_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta, npts=npts)
-    return xt*L0, Lt*L0
+    if sigma==0:
+        length = straight_channel_length(t=tmax, L=L0, q=q, beta=beta, zeta=zeta)
+        x = np.linspace(0, length, npts)
+        return x, np.ones_like(x)*L0
+    else:
+        xt, Lt = creep_dimensionless(sigma_tilde=beta*sigma*L0**2/(q*eta), tmax_tilde=zeta*sigma*tmax/eta, npts=npts)
+        return xt*L0, Lt*L0
+
+def central_speed(L, q, beta=1., zeta=1):
+    return zeta*q/(beta*L)
+
+def straight_channel_length(t, L, q, beta=1, zeta=1):
+    return t*central_speed(L=L, q=q, beta=beta, zeta=zeta)
+
+def creep_and_relax(sigma, tcreep, trelax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1, t0=0):
+    return creep_series([0, sigma, 0], [t0, tcreep, trelax], L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
+
+def creep_series(s_list, t_list, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    x, L = np.array([0]), np.array([L0])
+    for i in range(len(s_list)):
+        if t_list[i]>0:
+            cur_x, cur_L = creep_dimensional(s_list[i], t_list[i], L0=L[-1], npts=int(npts/len(s_list)), q=q, eta=eta, beta=beta, zeta=zeta)
+            x = np.append(x, cur_x[1:]+x[-1])
+            L = np.append(L, cur_L[1:])
+    return x, L
+
+def square_wave(s1, s2, period, Nperiods=10, duty=0.5, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    s_list, t_list = [], []
+    for i in range(Nperiods):
+        s_list.append(s1)
+        t_list.append(period*duty)
+        s_list.append(s2)
+        t_list.append(period*(1-duty))
+    return creep_series(s_list, t_list, L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
 
 def solve_generalized(t, sigma, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
     return
