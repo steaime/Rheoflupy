@@ -1,6 +1,38 @@
 import functools
 import numpy as np
+from scipy.special import erfinv, erfi
+from scipy.optimize import root_scalar
 from scipy.integrate import solve_ivp
+
+def erfiinv_old(x):
+    #return np.imag(erfinv(1j * x))
+    #f = lambda y: erfi(y) - x
+    #return root_scalar(f, bracket=[-10, 10]).root
+    # scalar function only
+    f = lambda y: erfi(y) - x
+
+    sol = root_scalar(
+        f,
+        bracket=[-5, 5],
+        method='bisect'
+    )
+    return sol.root
+
+def _erfi_inv_scalar(x):
+    # scalar root solve
+    def f(y):
+        return erfi(y) - x
+
+    sol = root_scalar(f, bracket=[-5, 5], method='bisect')
+    return sol.root
+
+
+def erfiinv(x):
+    x = np.asarray(x)
+
+    # vectorize scalar solver
+    vec_func = np.vectorize(_erfi_inv_scalar, otypes=[float])
+    return vec_func(x)
 
 # Channel shape design functions (single stress and frequency)
 
@@ -87,6 +119,39 @@ def creep_series(s_list, t_list, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, z
     return x, L
 
 def square_wave(s1, s2, period, Nperiods=10, duty=0.5, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    s_list, t_list = [], []
+    for i in range(Nperiods):
+        s_list.append(s1)
+        t_list.append(period*duty)
+        s_list.append(s2)
+        t_list.append(period*(1-duty))
+    return creep_series(s_list, t_list, L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
+
+# Channel shape design functions (stress ramp)
+
+def linramp_dimensionless(sigma_tilde, xmax_tilde=1, npts=1000):
+    xt = np.linspace(0, xmax_tilde, npts)
+    if sigma_tilde < 0:
+        Lt = np.exp(np.square(erfinv(xt*np.sqrt(-2*sigma_tilde/np.pi))))
+    else:
+        #Lt = np.exp(np.square(erfiinv()))
+        Lt = np.exp(-np.square(erfiinv(xt*np.sqrt(2*sigma_tilde/np.pi))))
+    return xt, Lt
+
+def linramp_dimensional(sigmadot, xmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    xt, Lt = linramp_dimensionless(sigmadot * L0**4*beta**2/(q**2*eta*zeta), xmax_tilde=xmax/L0, npts=npts)
+    return L0*xt, L0*Lt
+
+def ramp_series(sdot_list, xmax_list, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    x, L = np.array([0]), np.array([L0])
+    for i in range(len(sdot_list)):
+        if xmax_list[i]>0:
+            cur_x, cur_L = linramp_dimensional(sdot_list[i], xmax_list[i], L0=L[-1], npts=int(npts/len(sdot_list)), q=q, eta=eta, beta=beta, zeta=zeta)
+            x = np.append(x, cur_x[1:]+x[-1])
+            L = np.append(L, cur_L[1:])
+    return x, L
+
+def triangular_wave(speak, period, Nperiods=10, duty=0.5, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
     s_list, t_list = [], []
     for i in range(Nperiods):
         s_list.append(s1)
