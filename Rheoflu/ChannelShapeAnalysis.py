@@ -132,7 +132,7 @@ def analyze_sweep(x, L, t=None, q=None, q_from_omega=None, eta=1e-3, beta=1, zet
 
 # Channel plotting function
 
-def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, return_minima=False):
+def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, return_minima=False, export_fname=None):
     """
     if t is None, try to reconstruct it based on:
     - q, if given
@@ -156,16 +156,16 @@ def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, ret
         cax = ax
     else:
         fig, ax = plt.subplots(ncols=2, figsize=(10,6))
-        cax = ax[0]
-        ax[1].plot(x*1e3, L/2*1e6, 'k-')
-        ax[1].plot(x*1e3, -L/2*1e6, 'k-')
-        ax[1].plot(x[min_idx]*1e3, L[min_idx]/2*1e6, 'kx')
-        ax[1].set_xlabel(r'$x$ [mm]')
-    cax.plot(t, L/2*1e6, 'k-')
-    cax.plot(t, -L/2*1e6, 'k-')
-    cax.plot(t[min_idx], L[min_idx]/2*1e6, 'kx')
-    cax.set_xlabel(r'$t$ [s]')
-    cax.set_ylabel(r'$L$ [µm]')
+        ax[0].plot(t, L/2*1e6, 'k-')
+        ax[0].plot(t, -L/2*1e6, 'k-')
+        ax[0].plot(t[min_idx], L[min_idx]/2*1e6, 'kx')
+        ax[0].set_xlabel(r'$t$ [s]')
+        ax[0].set_ylabel(r'$L$ [µm]')
+        cax = ax[1]
+    cax.plot(x*1e3, L/2*1e6, 'k-')
+    cax.plot(x*1e3, -L/2*1e6, 'k-')
+    cax.plot(x[min_idx]*1e3, L[min_idx]/2*1e6, 'kx')
+    cax.set_xlabel(r'$x$ [mm]')
     
     if q is not None:
         ax2 = [cax.twinx() for cax in ax]
@@ -179,8 +179,20 @@ def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, ret
         ax[1].axes.get_yaxis().set_ticklabels([])
     else:
         ax2 = None
+        stress = None
 
     fig.tight_layout()
+    
+    if export_fname is not None:
+        export_cols = [x*1e3, L*1e6]
+        hdr = 'x[mm]\tL[um]'
+        if t is not None:
+            export_cols.append(t)
+            hdr += '\tt[s]'
+        if stress is not None:
+            export_cols.append(stress)
+            hdr += '\tstress[Pa]'
+        np.savetxt(export_fname, np.column_stack(export_cols), header=hdr, delimiter='\t')
     
     if return_minima:
         return fig, ax, ax2, min_idx[0]

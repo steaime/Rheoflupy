@@ -1,36 +1,17 @@
 import functools
 import numpy as np
-from scipy.special import erfinv, erfi
+from scipy.special import erf, erfinv, erfi
 from scipy.optimize import root_scalar
 from scipy.integrate import solve_ivp
 
-def erfiinv_old(x):
-    #return np.imag(erfinv(1j * x))
-    #f = lambda y: erfi(y) - x
-    #return root_scalar(f, bracket=[-10, 10]).root
-    # scalar function only
-    f = lambda y: erfi(y) - x
-
-    sol = root_scalar(
-        f,
-        bracket=[-5, 5],
-        method='bisect'
-    )
-    return sol.root
-
 def _erfi_inv_scalar(x):
-    # scalar root solve
     def f(y):
         return erfi(y) - x
-
     sol = root_scalar(f, bracket=[-5, 5], method='bisect')
     return sol.root
 
-
 def erfiinv(x):
     x = np.asarray(x)
-
-    # vectorize scalar solver
     vec_func = np.vectorize(_erfi_inv_scalar, otypes=[float])
     return vec_func(x)
 
@@ -106,8 +87,12 @@ def central_speed(L, q, beta=1., zeta=1):
 def straight_channel_length(t, L, q, beta=1, zeta=1):
     return t*central_speed(L=L, q=q, beta=beta, zeta=zeta)
 
-def creep_and_relax(sigma, tcreep, trelax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1, t0=0):
-    return creep_series([0, sigma, 0], [t0, tcreep, trelax], L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
+def creep_and_relax(sigma, tcreep, trelax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1, t0=0, L0_end=False):
+    if L0_end:
+        x, L = creep_dimensional(-sigma, tcreep, L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
+        return creep_series([0, sigma, 0], [t0, tcreep, trelax], L0=L[-1], npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
+    else:
+        return creep_series([0, sigma, 0], [t0, tcreep, trelax], L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
 
 def creep_series(s_list, t_list, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
     x, L = np.array([0]), np.array([L0])
@@ -138,27 +123,26 @@ def linramp_dimensionless(sigma_tilde, xmax_tilde=1, npts=1000):
         Lt = np.exp(-np.square(erfiinv(xt*np.sqrt(2*sigma_tilde/np.pi))))
     return xt, Lt
 
-def linramp_dimensional(sigmadot, xmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+def linramp_xmax(sigmadot, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    if sigmadot < 0:
+        return (q/(L0*beta))*np.sqrt(-np.pi*eta*zeta/(2*sigmadot))*erf((tmax/beta)*np.sqrt(-sigmadot*zeta/(2*eta)))
+    else:
+        return (q/(L0*beta))*np.sqrt(np.pi*eta*zeta/(2*sigmadot))*erfi((tmax/beta)*np.sqrt(sigmadot*zeta/(2*eta)))
+
+def linramp_dimensional(sigmadot, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1, reverse=False):
+    xmax = linramp_xmax(sigmadot=sigmadot, tmax=tmax, L0=L0, q=q, eta=eta, beta=beta, zeta=zeta)
     xt, Lt = linramp_dimensionless(sigmadot * L0**4*beta**2/(q**2*eta*zeta), xmax_tilde=xmax/L0, npts=npts)
-    return L0*xt, L0*Lt
-
-def ramp_series(sdot_list, xmax_list, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
-    x, L = np.array([0]), np.array([L0])
-    for i in range(len(sdot_list)):
-        if xmax_list[i]>0:
-            cur_x, cur_L = linramp_dimensional(sdot_list[i], xmax_list[i], L0=L[-1], npts=int(npts/len(sdot_list)), q=q, eta=eta, beta=beta, zeta=zeta)
-            x = np.append(x, cur_x[1:]+x[-1])
-            L = np.append(L, cur_L[1:])
+    if reverse:
+        return L0*xt, L0*Lt[::-1]
+    else:
+        return L0*xt, L0*Lt
+    
+def concatenate_channels(ch_list):
+    x, L = ch_list[0][0], ch_list[0][1]
+    for i in range(1, len(ch_list)):
+        x = np.append(x, ch_list[i][0][1:]+x[-1])
+        L = np.append(L, ch_list[i][1][1:])
     return x, L
-
-def triangular_wave(speak, period, Nperiods=10, duty=0.5, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
-    s_list, t_list = [], []
-    for i in range(Nperiods):
-        s_list.append(s1)
-        t_list.append(period*duty)
-        s_list.append(s2)
-        t_list.append(period*(1-duty))
-    return creep_series(s_list, t_list, L0=L0, npts=npts, q=q, eta=eta, beta=beta, zeta=zeta)
 
 def solve_generalized(t, sigma, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
     return
