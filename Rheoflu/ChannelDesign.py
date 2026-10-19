@@ -3,6 +3,7 @@ import numpy as np
 from scipy.special import erf, erfinv, erfi
 from scipy.optimize import root_scalar
 from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
 
 def _erfi_inv_scalar(x):
     def f(y):
@@ -125,9 +126,9 @@ def linramp_dimensionless(sigma_tilde, xmax_tilde=1, npts=1000):
 
 def linramp_xmax(sigmadot, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
     if sigmadot < 0:
-        return (q/(L0*beta))*np.sqrt(-np.pi*eta*zeta/(2*sigmadot))*erf((tmax/beta)*np.sqrt(-sigmadot*zeta/(2*eta)))
+        return (q/(L0*beta))*np.sqrt(-np.pi*eta*zeta/(2*sigmadot))*erf(tmax*np.sqrt(-sigmadot*zeta/(2*eta)))
     else:
-        return (q/(L0*beta))*np.sqrt(np.pi*eta*zeta/(2*sigmadot))*erfi((tmax/beta)*np.sqrt(sigmadot*zeta/(2*eta)))
+        return (q/(L0*beta))*np.sqrt(np.pi*eta*zeta/(2*sigmadot))*erfi(tmax*np.sqrt(sigmadot*zeta/(2*eta)))
 
 def linramp_dimensional(sigmadot, tmax, L0=1e-4, npts=1000, q=1e-4, eta=1e-3, beta=1, zeta=1, reverse=False):
     xmax = linramp_xmax(sigmadot=sigmadot, tmax=tmax, L0=L0, q=q, eta=eta, beta=beta, zeta=zeta)
@@ -165,6 +166,8 @@ def concatenate_dimensionless(sigma_tilde_list, rel_k_list=None, nperiods=2, pts
     return all_xt, all_Lt, all_tt
 
 def gen_param_list(omega, sigma, L0=1e-4, nperiods=2, pts_per_sol=1000, q=1e-4, eta=1e-3, beta=1, zeta=1):
+    if not hasattr(omega, '__len__') and not hasattr(sigma, '__len__'):
+        omega, sigma = [omega], [sigma]
     if not hasattr(omega, '__len__'):
         omega = [omega] * len(sigma)
     if not hasattr(sigma, '__len__'):
@@ -223,21 +226,21 @@ def stress_sweep(omega, sigma, channel_length, L0=1e-4, nperiods=2, pts_per_sol=
         return x, L, t
     
 def sweep_setlength_absk(sigma_tilde_list, rel_k_list, channel_length=1, L0=1, omega_scale=1, eta=1e-3, beta=1, zeta=1, nperiods=2, pts_per_sol=1000, max_iter=10, verbose=0, return_k=False):
-    k_in = rel_k_list
+    k_in = list(rel_k_list)
     w_scale = omega_scale
     kscale_list = []
     for j in range(max_iter):
         test_x, test_L, test_t, kscale_out = sweep_setlength(sigma_tilde_list, rel_k_list=k_in, channel_length=channel_length, L0=L0, 
                                                              omega_scale=w_scale, nperiods=nperiods, pts_per_sol=pts_per_sol, return_k=True)
         kscale_list.append(kscale_out)
-        k_logrelerr = np.log10(np.abs(kscale_out-1))
-        if k_logrelerr>-2:
+        k_relerr = np.abs(kscale_out-1)
+        if k_relerr > 1e-2:
             for i in range(len(k_in)):
                 k_in[i] *= kscale_out
             w_scale /= kscale_out
         else:
             if verbose > 0:
-                print('{0} iterations: k scale is off by {1:.1e}%'.format(len(kscale_list), 100*10**k_logrelerr))
+                print('{0} iterations: k scale is off by {1:.1e}%'.format(len(kscale_list), 100*k_relerr))
             break
     if verbose > 1:
         plt.plot(kscale_list)
@@ -258,7 +261,7 @@ def channel_set_length(omega, sigma, channel_length, L0=1e-4, nperiods=2, pts_pe
         pars[i]['k'] = k_list[i]
         pars[i]['q'] = q_from_k(omega=pars[i]['omega'], beta=beta, L0=L0, k=pars[i]['k'], zeta=zeta)
     q_list = [p['q'] for p in pars]
-    if np.log10(np.abs(np.max(q_list)/np.min(q_list)-1) > -3):
+    if np.abs(np.max(q_list)/np.min(q_list)-1) > 1e-3:
         print('WARNING: q values computed using k and omega for each constriction vary by more than 0.1%')
     if return_params:
         return x, L, t, pars

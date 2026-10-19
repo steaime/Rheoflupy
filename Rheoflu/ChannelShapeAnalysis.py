@@ -23,14 +23,14 @@ def q_from_L(t, x, L, beta=1, zeta=1, max_rtol=None):
     q = (beta/zeta)*L*np.gradient(x, t)
     if max_rtol is not None:
         rel_var = np.max(q) / np.min(q)-1
-        if rel_val>max_rtol:
-            print('WARNING: relative variation of {0:.3f}% exceeds threshold value {0:.3f}% in q_from_L'.format(rel_val*100, max_rtol*100))
+        if rel_var>max_rtol:
+            print('WARNING: relative variation of {0:.3f}% exceeds threshold value {1:.3f}% in q_from_L'.format(rel_var*100, max_rtol*100))
     return np.mean(q)
 
 def q_from_Lx(x, L, omega, beta=1, zeta=1):
     min_idx = argrelmin(L)[0]
     if len(min_idx)>1:
-        t = t_from_L(x, L, q=1, beta=beta)
+        t = t_from_L(x, L, q=1, beta=beta, zeta=zeta)
         return (t[min_idx[1]]-t[min_idx[0]])*omega/(2*np.pi)
     else:
         print('ERROR in q_from_Lx: provided channel shape needs to have at least one full period ({0})'.format(min_idx))
@@ -61,7 +61,7 @@ def sin_stress(t, amp, w, phi=0):
     return amp * np.sin(w * t + phi)
 
 def sin_fit(t_data, s_data, nper=1):
-    return curve_fit(sin_stress, t_data, s_data, p0=[max(s_data), 2*np.pi/(t_data[-1]-t_data[0])/nper, 0])
+    return curve_fit(sin_stress, t_data, s_data, p0=[max(s_data), 2*np.pi/(t_data[-1]-t_data[0])*nper, 0])
     
 def analyze_sweep(x, L, t=None, q=None, q_from_omega=None, eta=1e-3, beta=1, zeta=1, include_extrema=True, silent=False):
     
@@ -69,14 +69,14 @@ def analyze_sweep(x, L, t=None, q=None, q_from_omega=None, eta=1e-3, beta=1, zet
         if q is None and q_from_omega is not None:
             q = q_from_Lx(x, L, q_from_omega, beta=beta, zeta=zeta)
         if q is not None:
-            t = t_from_L(x, L, q, beta=beta)
+            t = t_from_L(x, L, q, beta=beta, zeta=zeta)
     if q is None and t is not None:
         q = q_from_L(t, x, L, beta=beta, zeta=zeta)
         
     if silent:
         min_idx = argrelmin(L)[0]
     else:
-        fig, ax, ax2, min_idx = plot_channel(x, L, t=t, q=q, eta=eta, return_minima=True)
+        fig, ax, ax2, min_idx = plot_channel(x, L, t=t, q=q, eta=eta, beta=beta, zeta=zeta, return_minima=True)
         print('Planar flow rate needed: {0:.1e} mm2/s'.format(q*1e6))
                
     stress_amps = []
@@ -146,7 +146,7 @@ def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, ret
         if q is None and omega is not None:
             q = q_from_Lx(x, L, omega=omega, beta=beta, zeta=zeta)
         if q is not None:
-            t = t_from_L(x, L, q, beta=beta)
+            t = t_from_L(x, L, q, beta=beta, zeta=zeta)
     else:
         if omega is not None:
             print('WARNING: disregarding omega parameter in plot_channel, as t is specified')
@@ -200,10 +200,10 @@ def plot_channel(x, L, t=None, q=None, omega=None, eta=1e-3, beta=1, zeta=1, ret
         return fig, ax, ax2
     
 def plot_solution(omega, sigma, q, eta, L0, beta=1, zeta=1):
-    x, L, t = cd.solve_dimensional(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0)
-    fig, ax, ax2 = plot_channel(x, L, t=t, q=q, eta=eta)
-    ax[1].axvline(x=dimensional_wavelength(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0)*1e3, c='b', ls='--')
-    ax[1].axhline(y=0.5*(L0+dimensional_amplitude(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0))*1e6, c='b', ls='--')
+    x, L, t = cd.solve_dimensional(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0, beta=beta, zeta=zeta)
+    fig, ax, ax2 = plot_channel(x, L, t=t, q=q, eta=eta, beta=beta, zeta=zeta)
+    ax[1].axvline(x=dimensional_wavelength(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0, beta=beta, zeta=zeta)*1e3, c='b', ls='--')
+    ax[1].axhline(y=0.5*(L0+dimensional_amplitude(omega=omega, sigma=sigma, q=q, eta=eta, L0=L0, zeta=zeta))*1e6, c='b', ls='--')
     
     
 def AnalyzeChannelShape(channel_img, topedge, bottomedge, crop=None, px_size=1, q=None, design_omega=300, eta=1.7e-2, spl_smoothf=10, beta=1, zeta=1, save_fig=None, save_data=None):
@@ -247,8 +247,8 @@ def AnalyzeChannelShape(channel_img, topedge, bottomedge, crop=None, px_size=1, 
         q = q_from_Lx(x, L, design_omega, beta=beta, zeta=zeta)
     else:
         design_omega = None
-    t = t_from_L(x, L, q=q)
-    constriction_params = analyze_sweep(x, L, q=q, q_from_omega=design_omega, eta=eta, include_extrema=False, silent=True)
+    t = t_from_L(x, L, q=q, beta=beta, zeta=zeta)
+    constriction_params = analyze_sweep(x, L, q=q, q_from_omega=design_omega, eta=eta, beta=beta, zeta=zeta, include_extrema=False, silent=True)
     stramp, omega, phi = constriction_params[0][0], constriction_params[1][0], constriction_params[2][0]
     if design_omega is None:
         design_omega = omega
